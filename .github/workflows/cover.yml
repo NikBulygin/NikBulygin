@@ -1,0 +1,47 @@
+name: cover
+
+# The activity grid is anchored to the current week, so a banner left alone
+# slowly drifts out of date — its right edge would keep showing the month it
+# was built in. Rebuilding monthly keeps it current; the build is deterministic,
+# so a month with nothing new to say produces no commit.
+
+on:
+  schedule:
+    - cron: '17 4 1 * *'
+  workflow_dispatch:
+    inputs:
+      refresh:
+        description: 'Re-download the screenshots from bulnik.dev'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install renderers
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends librsvg2-bin webp
+
+      - name: Build cover
+        run: |
+          python3 tools/build_cover.py --stats \
+            ${{ inputs.refresh && '--refresh' || '' }}
+
+      - name: Commit if changed
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add assets
+          if git diff --cached --quiet; then
+            echo 'cover unchanged'
+          else
+            git commit -m 'chore: rebuild profile cover'
+            git push
+          fi

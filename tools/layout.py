@@ -1,0 +1,191 @@
+"""SVG composition for the profile cover.
+
+Two rules drive the layout: the activity grid is the dominant element and the
+screenshot strip is a compact accent above it, and the grid area carries nothing
+but activity — no project labels, no annotations tying bursts to cases. Project
+names live in the README table underneath, not in the banner.
+
+Palette values are lifted from personalpage `app/assets/css/brand-tokens.css`
+(`ink` and `white` themes) so the cover and the site read as one design.
+"""
+
+from xml.sax.saxutils import escape
+
+CANVAS_W = 1280
+CANVAS_H = 560
+PAD = 56
+RIGHT = CANVAS_W - PAD          # 1224 — every block ends here
+
+# Screenshot strip
+TILE_W = 208
+TILE_H = 117
+TILE_GAP = 16
+TILE_Y = 160
+TILE_R = 8
+
+# Activity grid. Pitch is chosen so 53 columns land exactly on RIGHT.
+GRID_X = 90                     # PAD + room for the weekday labels
+GRID_Y = 334
+CELL = 16
+PITCH = 21.5                    # 90 + 52 * 21.5 + 16 == 1224
+CELL_R = 3
+LEGEND_Y = 512
+MONTH_LABEL_GAP = 3             # columns a month needs to earn its own label
+
+MONTHS = ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
+
+THEMES = {
+    'dark': {
+        'bg': '#0a0a0c',
+        'border': '#22222a',
+        'text': '#f5f5f7',
+        'dim': '#a1a1aa',
+        'faint': '#8b8b96',
+        'accent': '#10b981',
+        'empty': '#17171d',
+        'ramp': ('#0e4c37', '#15805c', '#10b981', '#6ee7b7'),
+    },
+    'light': {
+        'bg': '#f4f7f6',
+        'border': '#d5ded9',
+        'text': '#0b1210',
+        'dim': '#3d4a44',
+        'faint': '#5f6d67',
+        'accent': '#047857',
+        'empty': '#e2e8e5',
+        'ramp': ('#d1fae5', '#6ee7b7', '#10b981', '#047857'),
+    },
+}
+
+NAME = 'NIKITA BULYGIN'
+TITLE = 'Senior Full-Stack Developer · CTO'
+STACK = 'Go · TypeScript · Python · Rust — Kubernetes · PostgreSQL · RAG/LLM · Solana'
+SITE = 'bulnik.dev'
+
+
+def _num(value):
+    """Trim trailing zeros so identical geometry yields identical bytes."""
+    text = f'{value:.3f}'.rstrip('0').rstrip('.')
+    return text or '0'
+
+
+def _text(x, y, content, *, size, fill, weight=400, family='Inter', anchor='start',
+          spacing=None):
+    attrs = [
+        f'x="{_num(x)}"', f'y="{_num(y)}"',
+        f'font-family="{family}"', f'font-size="{_num(size)}"',
+        f'font-weight="{weight}"', f'fill="{fill}"',
+    ]
+    if anchor != 'start':
+        attrs.append(f'text-anchor="{anchor}"')
+    if spacing:
+        attrs.append(f'letter-spacing="{_num(spacing)}"')
+    return f'<text {" ".join(attrs)}>{escape(content)}</text>'
+
+
+def _month_labels(days, theme):
+    """One label per month change, placed on the column that starts it.
+
+    A month that owns fewer than MONTH_LABEL_GAP columns would collide with the
+    next label, so it yields to it — otherwise the sliver of the month the
+    window opens on prints straight through its successor.
+    """
+    marks = []
+    previous = None
+    for column in range(52):
+        month = days[column * 7]['date'].month
+        if month != previous:
+            if marks and column - marks[-1][0] < MONTH_LABEL_GAP:
+                marks[-1] = (column, month)
+            else:
+                marks.append((column, month))
+            previous = month
+
+    return [
+        _text(GRID_X + column * PITCH, GRID_Y - 10, MONTHS[month - 1],
+              size=12, fill=theme['faint'])
+        for column, month in marks
+    ]
+
+
+def _grid_cells(days, theme):
+    out = []
+    for index, day in enumerate(days):
+        column, row = divmod(index, 7)
+        fill = theme['empty'] if day['level'] == 0 else theme['ramp'][day['level'] - 1]
+        x = GRID_X + column * PITCH
+        y = GRID_Y + row * PITCH
+        out.append(
+            f'<rect x="{_num(x)}" y="{_num(y)}" width="{CELL}" height="{CELL}" '
+            f'rx="{CELL_R}" fill="{fill}"/>'
+        )
+    return out
+
+
+def _legend(theme):
+    swatch, gap = 12, 3
+    less_w, more_w, pad = 29, 34, 8
+    block = 5 * swatch + 4 * gap
+    x = RIGHT - (less_w + pad + block + pad + more_w)
+
+    out = [_text(x, LEGEND_Y, 'Less', size=12, fill=theme['faint'])]
+    sx = x + less_w + pad
+    sy = LEGEND_Y - swatch + 2
+    for fill in (theme['empty'],) + tuple(theme['ramp']):
+        out.append(
+            f'<rect x="{_num(sx)}" y="{_num(sy)}" width="{swatch}" height="{swatch}" '
+            f'rx="2.5" fill="{fill}"/>'
+        )
+        sx += swatch + gap
+    out.append(_text(RIGHT, LEGEND_Y, 'More', size=12, fill=theme['faint'],
+                     anchor='end'))
+    return out
+
+
+def _tiles(images, theme):
+    """Screenshot strip: no captions, no project names — just the frames."""
+    out = []
+    for index, data_uri in enumerate(images):
+        x = PAD + index * (TILE_W + TILE_GAP)
+        out.append(
+            f'<clipPath id="tile{index}">'
+            f'<rect x="{x}" y="{TILE_Y}" width="{TILE_W}" height="{TILE_H}" rx="{TILE_R}"/>'
+            f'</clipPath>'
+        )
+        out.append(
+            f'<image x="{x}" y="{TILE_Y}" width="{TILE_W}" height="{TILE_H}" '
+            f'clip-path="url(#tile{index})" preserveAspectRatio="xMidYMid slice" '
+            f'href="{data_uri}"/>'
+        )
+        out.append(
+            f'<rect x="{x}" y="{TILE_Y}" width="{TILE_W}" height="{TILE_H}" rx="{TILE_R}" '
+            f'fill="none" stroke="{theme["border"]}" stroke-width="1"/>'
+        )
+    return out
+
+
+def render(days, images, theme_name):
+    theme = THEMES[theme_name]
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'xmlns:xlink="http://www.w3.org/1999/xlink" '
+        f'width="{CANVAS_W}" height="{CANVAS_H}" viewBox="0 0 {CANVAS_W} {CANVAS_H}">',
+        f'<rect width="{CANVAS_W}" height="{CANVAS_H}" fill="{theme["bg"]}"/>',
+
+        _text(PAD, 64, NAME, size=38, weight=600, fill=theme['text'], spacing=0.5),
+        _text(RIGHT, 64, SITE, size=16, weight=500, fill=theme['accent'], anchor='end'),
+        _text(PAD, 98, TITLE, size=17, fill=theme['dim']),
+        _text(PAD, 126, STACK, size=13, fill=theme['faint'], family='JetBrains Mono'),
+    ]
+    parts += _tiles(images, theme)
+    parts += _month_labels(days, theme)
+
+    for row, label in ((1, 'Mon'), (3, 'Wed'), (5, 'Fri')):
+        parts.append(_text(GRID_X - 8, GRID_Y + row * PITCH + 12, label,
+                           size=12, fill=theme['faint'], anchor='end'))
+
+    parts += _grid_cells(days, theme)
+    parts += _legend(theme)
+    parts.append('</svg>')
+    return '\n'.join(parts)
