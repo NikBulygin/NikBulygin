@@ -13,6 +13,7 @@ Requires: python3, dwebp (libwebp-tools), rsvg-convert (librsvg2-bin).
 import argparse
 import base64
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -27,13 +28,15 @@ import layout
 ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ROOT / 'tools'
 CACHE = ROOT / 'assets' / 'src'
+ICON_CACHE = ROOT / 'assets' / 'icons'
 OUT = ROOT / 'assets'
 
 SITE = 'https://bulnik.dev'
 SCALE = 2                       # 1280x560 logical -> 2560x1120 delivered
 
-# Four production cases, visually distinct from each other. Edit this list to
-# change what the strip shows; the banner never names them.
+# Five production cases, visually distinct from each other, filling the strip
+# edge to edge. Edit this list to change what it shows; the banner never names
+# them — keep it at five entries or adjust TILE_W in layout.py to match.
 SCREENSHOTS = (
     ('med-platform', '/projects/gallery/analytics-showcase/00.webp',
                      '/projects/gallery/analytics-showcase/00-white.webp'),
@@ -41,11 +44,28 @@ SCREENSHOTS = (
                   '/projects/gallery/slot-placement/00-white.webp'),
     ('marketplace-mvp', '/projects/gallery/voltparts/02.webp',
                         '/projects/gallery/voltparts/02-white.webp'),
+    ('ai-editorial', '/projects/gallery/typst-docs/00.webp',
+                     '/projects/gallery/typst-docs/00-white.webp'),
     ('smart-parking', '/projects/covers/parking-dashboard.webp',
                       '/projects/covers/parking-dashboard-white.webp'),
 )
 
 THEME_INDEX = {'dark': 1, 'light': 2}
+
+# Brand marks come from Simple Icons (CC0); the hexes are the ones that project
+# publishes for each brand. Every icon is a single path on a 24x24 canvas.
+ICON_SOURCE = 'https://cdn.jsdelivr.net/npm/simple-icons@15/icons/{slug}.svg'
+BRAND_COLOURS = {
+    'go': '#00ADD8',
+    'typescript': '#3178C6',
+    'python': '#3776AB',
+    'rust': '#000000',
+    'kubernetes': '#326CE5',
+    'docker': '#2496ED',
+    'gitlab': '#FC6D26',
+    'postgresql': '#4169E1',
+    'solana': '#9945FF',
+}
 
 
 def fetch(url, target, refresh):
@@ -84,6 +104,20 @@ def data_uri(webp_path, width, height):
     finally:
         png_path.unlink(missing_ok=True)
     return f'data:image/png;base64,{encoded}'
+
+
+def load_icons(refresh):
+    """Return {slug: (path_data, brand_colour)} for the technology row."""
+    icons = {}
+    for slug, colour in BRAND_COLOURS.items():
+        cached = fetch(ICON_SOURCE.format(slug=slug),
+                       ICON_CACHE / f'{slug}.svg', refresh)
+        markup = cached.read_text(encoding='utf-8')
+        match = re.search(r'<path[^>]*\sd="([^"]+)"', markup)
+        if not match:
+            raise SystemExit(f'no path found in {cached}')
+        icons[slug] = (match.group(1), colour)
+    return icons
 
 
 def rasterise(svg, destination):
@@ -125,6 +159,8 @@ def main():
         levels = '  '.join(f'L{lvl} {count}' for lvl, count in summary['levels'].items())
         print(f'levels      {levels}')
 
+    icons = load_icons(arguments.refresh)
+
     OUT.mkdir(parents=True, exist_ok=True)
     for theme, column in THEME_INDEX.items():
         print(f'building {theme}')
@@ -134,7 +170,7 @@ def main():
             cached = fetch(SITE + path, CACHE / f'{slug}-{theme}.webp', arguments.refresh)
             images.append(data_uri(cached, layout.TILE_W * SCALE, layout.TILE_H * SCALE))
 
-        svg = layout.render(days, images, theme)
+        svg = layout.render(days, images, icons, theme)
         destination = OUT / f'cover-{theme}.png'
         rasterise(svg, destination)
         size_kb = destination.stat().st_size // 1024
